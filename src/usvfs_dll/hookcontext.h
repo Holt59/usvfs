@@ -29,8 +29,6 @@ along with usvfs. If not, see <http://www.gnu.org/licenses/>.
 #include <winapi.h>
 #include <boost/any.hpp>
 #include <boost/filesystem/path.hpp>
-#include <boost/thread/shared_mutex.hpp>
-#include <boost/thread/shared_lock_guard.hpp>
 #include <boost/interprocess/containers/string.hpp>
 #include <boost/interprocess/containers/flat_set.hpp>
 #include <boost/interprocess/containers/slist.hpp>
@@ -235,6 +233,8 @@ public:
 private:
   static void unlock(HookContext *instance);
   static void unlockShared(const HookContext *instance);
+  static void noAction(HookContext *instance) {} // used if mutex is not locked
+  static void noActionShared(const HookContext *instance) {} // used if mutex is not locked
 
   SharedParameters *retrieveParameters(const USVFSParameters &params);
 
@@ -242,7 +242,6 @@ private:
   static HookContext *s_Instance;
 
   shared::SharedMemoryT m_ConfigurationSHM;
-#pragma message("this should be protected by a system-wide named mutex")
   SharedParameters *m_Parameters{nullptr};
   RedirectionTreeContainer m_Tree;
   RedirectionTreeContainer m_InverseTree;
@@ -255,8 +254,7 @@ private:
 
   HMODULE m_DLLModule;
 
-  //  mutable std::recursive_mutex m_Mutex;
-  mutable RecursiveBenaphore m_Mutex;
+  mutable RecursiveSemaphore m_Mutex;
 };
 }
 

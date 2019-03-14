@@ -94,6 +94,7 @@ HookContext::HookContext(const USVFSParameters &params, HMODULE module)
   , m_InverseTree(m_Parameters->currentInverseSHMName.c_str(), 65536)
   , m_DebugMode(params.debugMode)
   , m_DLLModule(module)
+  , m_Mutex("__hook_context_mutex")
 {
   if (s_Instance != nullptr) {
     throw std::runtime_error("singleton duplicate instantiation (HookContext)");
@@ -156,17 +157,20 @@ HookContext::ConstPtr HookContext::readAccess(const char*)
 {
   BOOST_ASSERT(s_Instance != nullptr);
 
-  // TODO: this should be a shared mutex!
-  s_Instance->m_Mutex.wait(200);
-  return ConstPtr(s_Instance, unlockShared);
+  if (s_Instance->m_Mutex.lock())
+    return ConstPtr(s_Instance, unlockShared);
+  else
+    return ConstPtr(s_Instance, noActionShared);
 }
 
 HookContext::Ptr HookContext::writeAccess(const char*)
 {
   BOOST_ASSERT(s_Instance != nullptr);
 
-  s_Instance->m_Mutex.wait(200);
-  return Ptr(s_Instance, unlock);
+  if (s_Instance->m_Mutex.lock())
+    return Ptr(s_Instance, unlock);
+  else
+    return Ptr(s_Instance, noAction);
 }
 
 void HookContext::setLogLevel(LogLevel level)
@@ -297,12 +301,12 @@ std::vector<std::future<int>> &HookContext::delayed()
 
 void HookContext::unlock(HookContext *instance)
 {
-  instance->m_Mutex.signal();
+  instance->m_Mutex.unlock();
 }
 
 void HookContext::unlockShared(const HookContext *instance)
 {
-  instance->m_Mutex.signal();
+  instance->m_Mutex.unlock();
 }
 
 extern "C" DLLEXPORT HookContext *__cdecl CreateHookContext(const USVFSParameters &params, HMODULE module)

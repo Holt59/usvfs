@@ -1,62 +1,62 @@
 #include "semaphore.h"
+
+#include <boost/interprocess/sync/named_recursive_mutex.hpp>
+#include <boost/date_time/posix_time/ptime.hpp>
 #include <spdlog.h>
-#include <scopeguard.h>
 
+using namespace boost::interprocess;
 
-RecursiveBenaphore::RecursiveBenaphore()
-  : m_Counter(0)
-  , m_OwnerId(0UL)
-  , m_Recursion(0)
+RecursiveSemaphore::RecursiveSemaphore(const char *name)
+  : m_Mutex(nullptr)
+  , m_Name(name)
 {
-  m_Semaphore = ::CreateSemaphore(nullptr, 1, 1, nullptr);
-}
-
-RecursiveBenaphore::~RecursiveBenaphore()
-{
-  ::CloseHandle(m_Semaphore);
-}
-
-void RecursiveBenaphore::wait(DWORD timeout)
-{
-  DWORD tid = ::GetCurrentThreadId();
-
-  if (::_InterlockedIncrement(&m_Counter) > 1) {
-    if (tid != m_OwnerId) {
-      int tries = 3;
-      while (::WaitForSingleObject(m_Semaphore, timeout) != WAIT_OBJECT_0) {
-        HANDLE owner = ::OpenThread(SYNCHRONIZE, FALSE, m_OwnerId);
-        ON_BLOCK_EXIT([owner] () { ::CloseHandle(owner); });
-        if ((tries <= 0)
-            || (::WaitForSingleObject(owner, 0) == WAIT_OBJECT_0)) {
-          // owner has quit without releasing the semaphore!
-          m_Recursion = 0;
-          spdlog::get("usvfs")
-              ->error("thread {} never released the mutex", m_OwnerId);
-          break;
-        } else {
-          --tries;
-        }
-      }
-    }
+  try {
+    m_Mutex = new named_recursive_mutex(open_or_create, m_Name);
+  } catch (interprocess_exception &e) {
+    spdlog::get("usvfs")
+      ->error("unable to open or create mutex {}", m_Name);
   }
-  m_OwnerId = tid;
-  ++m_Recursion;
 }
 
-void RecursiveBenaphore::signal()
+RecursiveSemaphore::~RecursiveSemaphore()
 {
-  if (m_Recursion == 0) {
+  if (m_Mutex != nullptr)
+    delete m_Mutex;
+}
+
+bool RecursiveSemaphore::lock()
+{
+  if (m_Mutex == nullptr)
+    return false;
+
+  bool res = false;
+  try {
+    boost::posix_time::ptime wait_time = microsec_clock::universal_time() + boost::posix_time::milliseconds(1000);
+    if (m_Mutex->timed_lock(wait_time)) {
+      res = true;
+    } else {
+      spdlog::get("usvfs")
+        ->error("unable to lock mutex {}: timeout", m_Name);
+    }
+  } catch (interprocess_exception &e) {
+    spdlog::get("usvfs")
+      ->error("unable to lock mutex {}: {}", m_Name, e.what());
+  }
+  return res;
+}
+
+void RecursiveSemaphore::unlock()
+{
+  if (m_Mutex == nullptr)
     return;
+
+  try {
+    m_Mutex->unlock();
+
+  } catch (interprocess_exception &e) {
+    spdlog::get("usvfs")
+      ->error("unable to unlock mutex {}: {}", m_Name, e.what());
   }
-  // no validation the signaling thread is the one owning the lock
-  DWORD recursion = --m_Recursion;
-  if (recursion == 0) {
-    m_OwnerId = 0;
-  }
-  DWORD result = ::_InterlockedDecrement(&m_Counter);
-  if (result > 0) {
-    if (recursion == 0) {
-      ::ReleaseSemaphore(m_Semaphore, 1, nullptr);
-    }
-  }
+
 }
+

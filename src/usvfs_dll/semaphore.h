@@ -1,34 +1,18 @@
 #pragma once
 
+#include <boost/interprocess//sync/named_recursive_mutex.hpp>
 
-#include <windows.h>
-
-
-// based on code by Jeff Preshing
-
-// this is a synchronization class that prefers
-// undefined behaviour over deadlock. It's utterly broken
-// and needs to be replaced in time.
-
-
-class RecursiveBenaphore
+class RecursiveSemaphore
 {
-
 public:
-  RecursiveBenaphore();
-  ~RecursiveBenaphore();
+  RecursiveSemaphore(const char *name);
+  ~RecursiveSemaphore();
 
-  // wait on the semaphore. after timeout this will check if the current owner
-  // thread is still alive and steal the semaphore if it isn't. Otherwise this
-  // will continue to wait.
-  void wait(DWORD timeout = INFINITE);
-  void signal();
+  bool lock();
+  void unlock();
 
 private:
-
-  LONG m_Counter;
-  DWORD m_OwnerId;
-  int m_Recursion;
-  HANDLE m_Semaphore;
+  boost::interprocess::named_recursive_mutex *m_Mutex;
+  const char *m_Name;
 
 };
